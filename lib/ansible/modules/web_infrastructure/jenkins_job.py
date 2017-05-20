@@ -192,7 +192,10 @@ class JenkinsJob:
         }
 
         # This kind of jobs do not have a property that makes them enabled/disabled
-        self.job_classes_exceptions = ["jenkins.branch.OrganizationFolder"]
+        self.job_classes_exceptions = [
+            "jenkins.branch.OrganizationFolder",
+            "com.cloudbees.hudson.plugins.folder.Folder"
+        ]
 
         self.EXCL_STATE = "excluded state"
 
