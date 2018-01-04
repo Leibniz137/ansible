@@ -298,7 +298,10 @@ def gather_vm_facts(content, vm):
     # facts that may or may not exist
     if vm.summary.runtime.host:
         host = vm.summary.runtime.host
-        facts['hw_esxi_host'] = host.summary.config.name
+        try:
+            facts['hw_esxi_host'] = host.summary.config.name
+        except:
+            pass
 
     datastores = vm.datastore
     for ds in datastores:
