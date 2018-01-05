@@ -303,17 +303,17 @@ def gather_vm_facts(content, vm):
     }
 
     # facts that may or may not exist
-    try:
-        if vm.summary.runtime.host:
-            host = vm.summary.runtime.host
+    if vm.summary.runtime.host:
+        host = vm.summary.runtime.host
+        try:
             facts['hw_esxi_host'] = host.summary.config.name
-    except:
-        pass
-    try:
-        if vm.summary.runtime.dasVmProtection:
+        except:
+            pass
+    if vm.summary.runtime.dasVmProtection:
+        try:
             facts['hw_guest_ha_state'] = vm.summary.runtime.dasVmProtection.dasProtected
-    except:
-        pass
+        except:
+            pass
 
     datastores = vm.datastore
     for ds in datastores:
