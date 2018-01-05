@@ -310,10 +310,7 @@ def gather_vm_facts(content, vm):
         except:
             pass
     if vm.summary.runtime.dasVmProtection:
-        try:
-            facts['hw_guest_ha_state'] = vm.summary.runtime.dasVmProtection.dasProtected
-        except:
-            pass
+        facts['hw_guest_ha_state'] = vm.summary.runtime.dasVmProtection.dasProtected
 
     datastores = vm.datastore
     for ds in datastores:
