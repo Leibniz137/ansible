@@ -309,8 +309,6 @@ def gather_vm_facts(content, vm):
             facts['hw_esxi_host'] = host.summary.config.name
         except:
             pass
-    if vm.summary.runtime.dasVmProtection:
-        facts['hw_guest_ha_state'] = vm.summary.runtime.dasVmProtection.dasProtected
 
     datastores = vm.datastore
     for ds in datastores:
