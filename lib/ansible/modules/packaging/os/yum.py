@@ -34,7 +34,7 @@ options:
     aliases: [ pkg ]
   exclude:
     description:
-      - "Package name(s) to exclude when state=present, or latest"
+      - Package name(s) to exclude when state=present, or latest
     version_added: "2.0"
   list:
     description:
@@ -127,6 +127,18 @@ options:
     type: bool
     default: "no"
     version_added: "2.4"
+  enable_plugin:
+    description:
+      - I(Plugin) name to enable for the install/update operation.
+        The enabled plugin will not persist beyond the transaction.
+    required: false
+    version_added: "2.5"
+  disable_plugin:
+    description:
+      - I(Plugin) name to disable for the install/update operation.
+        The disabled plugins will not persist beyond the transaction.
+    required: false
+    version_added: "2.5"
 notes:
   - When used with a `loop:` each package will be processed individually,
     it is much more efficient to pass the list directly to the `name` option.
@@ -153,9 +165,9 @@ requirements:
 author:
     - Ansible Core Team
     - Seth Vidal
-    - Eduard Snesarev (github.com/verm666)
-    - Berend De Schouwer (github.com/berenddeschouwer)
-    - Abhijeet Kasurde (github.com/akasurde)
+    - Eduard Snesarev (@verm666)
+    - Berend De Schouwer (@berenddeschouwer)
+    - Abhijeet Kasurde (@Akasurde)
 '''
 
 EXAMPLES = '''
@@ -256,7 +268,7 @@ def yum_base(conf_file=None, installroot='/'):
     my.preconf.debuglevel = 0
     my.preconf.errorlevel = 0
     my.preconf.plugins = True
-    #my.preconf.releasever = '/'
+    # my.preconf.releasever = '/'
     if installroot != '/':
         # do not setup installroot by default, because of error
         # CRITICAL:yum.cli:Config Error: Error accessing file for config file:////etc/yum.conf
@@ -318,10 +330,10 @@ def po_to_envra(po):
     return '%s:%s-%s-%s.%s' % (po.epoch, po.name, po.version, po.release, po.arch)
 
 
-def is_group_env_installed(name):
+def is_group_env_installed(name, conf_file, installroot='/'):
     name_lower = name.lower()
 
-    my = yum_base()
+    my = yum_base(conf_file, installroot)
     if yum.__version__ >= '3.4':
         groups_list = my.doGroupLists(return_evgrps=True)
     else:
@@ -662,15 +674,18 @@ def list_stuff(module, repoquerybin, conf_file, stuff, installroot='/', disabler
 
     if stuff == 'installed':
         return [pkg_to_dict(p) for p in sorted(is_installed(module, repoq, '-a', conf_file, qf=is_installed_qf, installroot=installroot)) if p.strip()]
-    elif stuff == 'updates':
+
+    if stuff == 'updates':
         return [pkg_to_dict(p) for p in sorted(is_update(module, repoq, '-a', conf_file, qf=qf, installroot=installroot)) if p.strip()]
-    elif stuff == 'available':
+
+    if stuff == 'available':
         return [pkg_to_dict(p) for p in sorted(is_available(module, repoq, '-a', conf_file, qf=qf, installroot=installroot)) if p.strip()]
-    elif stuff == 'repos':
+
+    if stuff == 'repos':
         return [dict(repoid=name, state='enabled') for name in sorted(repolist(module, repoq)) if name.strip()]
-    else:
-        return [pkg_to_dict(p) for p in sorted(is_installed(module, repoq, stuff, conf_file, qf=is_installed_qf, installroot=installroot)+
-                                                is_available(module, repoq, stuff, conf_file, qf=qf, installroot=installroot)) if p.strip()]
+
+    return [pkg_to_dict(p) for p in sorted(is_installed(module, repoq, stuff, conf_file, qf=is_installed_qf, installroot=installroot) +
+                                           is_available(module, repoq, stuff, conf_file, qf=qf, installroot=installroot)) if p.strip()]
 
 
 def exec_install(module, items, action, pkgs, res, yum_basecmd):
@@ -778,7 +793,7 @@ def install(module, items, repoq, yum_basecmd, conf_file, en_repos, dis_repos, i
 
         # groups
         elif spec.startswith('@'):
-            if is_group_env_installed(spec):
+            if is_group_env_installed(spec, conf_file, installroot=installroot):
                 continue
 
             pkg = spec
@@ -884,7 +899,7 @@ def remove(module, items, repoq, yum_basecmd, conf_file, en_repos, dis_repos, in
 
     for pkg in items:
         if pkg.startswith('@'):
-            installed = is_group_env_installed(pkg)
+            installed = is_group_env_installed(pkg, conf_file, installroot=installroot)
         else:
             installed = is_installed(module, repoq, pkg, conf_file, en_repos=en_repos, dis_repos=dis_repos, installroot=installroot)
 
@@ -917,7 +932,7 @@ def remove(module, items, repoq, yum_basecmd, conf_file, en_repos, dis_repos, in
         # at this point we check to see if the pkg is no longer present
         for pkg in pkgs:
             if pkg.startswith('@'):
-                installed = is_group_env_installed(pkg)
+                installed = is_group_env_installed(pkg, conf_file, installroot=installroot)
             else:
                 installed = is_installed(module, repoq, pkg, conf_file, en_repos=en_repos, dis_repos=dis_repos, installroot=installroot)
 
@@ -1146,7 +1161,7 @@ def latest(module, items, repoq, yum_basecmd, conf_file, en_repos, dis_repos, up
 
 def ensure(module, state, pkgs, conf_file, enablerepo, disablerepo,
            disable_gpg_check, exclude, repoq, skip_broken, update_only, security,
-           installroot='/', allow_downgrade=False):
+           installroot='/', allow_downgrade=False, disable_plugin='', enable_plugin=''):
 
     # fedora will redirect yum to dnf, which has incompatibilities
     # with how this module expects yum to operate. If yum-deprecated
@@ -1178,6 +1193,12 @@ def ensure(module, state, pkgs, conf_file, enablerepo, disablerepo,
         en_repos = enablerepo.split(',')
         r_cmd = ['--enablerepo=%s' % enablerepo]
         yum_basecmd.extend(r_cmd)
+
+    if enable_plugin:
+        yum_basecmd.extend(['--enableplugin', enable_plugin])
+
+    if disable_plugin:
+        yum_basecmd.extend(['--disableplugin', disable_plugin])
 
     if exclude:
         e_cmd = ['--exclude=%s' % exclude]
@@ -1288,6 +1309,8 @@ def main():
             install_repoquery=dict(type='bool', default=True),
             allow_downgrade=dict(type='bool', default=False),
             security=dict(type='bool', default=False),
+            enable_plugin=dict(type='list', default=[]),
+            disable_plugin=dict(type='list', default=[]),
         ),
         required_one_of=[['name', 'list']],
         mutually_exclusive=[['name', 'list']],
@@ -1304,6 +1327,12 @@ def main():
         module.fail_json(msg='. '.join(error_msgs))
 
     params = module.params
+    enable_plugin = params.get('enable_plugin', '')
+    if enable_plugin:
+        enable_plugin = ','.join(enable_plugin)
+    disable_plugin = params.get('disable_plugin', '')
+    if disable_plugin:
+        disable_plugin = ','.join(disable_plugin)
 
     if params['list']:
         repoquerybin = ensure_yum_utils(module)
@@ -1346,10 +1375,13 @@ def main():
         allow_downgrade = params['allow_downgrade']
         results = ensure(module, state, pkg, params['conf_file'], enablerepo,
                          disablerepo, disable_gpg_check, exclude, repoquery,
-                         skip_broken, update_only, security, params['installroot'], allow_downgrade)
+                         skip_broken, update_only, security, params['installroot'], allow_downgrade,
+                         disable_plugin=disable_plugin, enable_plugin=enable_plugin)
         if repoquery:
-            results['msg'] = '%s %s' % (results.get('msg', ''),
-                             'Warning: Due to potential bad behaviour with rhnplugin and certificates, used slower repoquery calls instead of Yum API.')
+            results['msg'] = '%s %s' % (
+                results.get('msg', ''),
+                'Warning: Due to potential bad behaviour with rhnplugin and certificates, used slower repoquery calls instead of Yum API.'
+            )
 
     module.exit_json(**results)
 

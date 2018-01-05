@@ -43,11 +43,12 @@ notes:
     different ways on each platform. On Debian based systems with C(apt);
     C(apt-get install rpm). On Mac with C(brew); C(brew install rpm).
     This command is already present on RedHat based systems.
-  - Requires BIG-IP < 12.1.0 because the required functionality is missing
-    on versions  earlier than that.
+  - Requires BIG-IP >= 12.1.0 because the required functionality is missing
+    on versions earlier than that.
 requirements:
   - f5-sdk >= 2.2.3
   - Requires BIG-IP >= 12.1.0
+  - The 'rpm' tool installed on the Ansible controller
 extends_documentation_fragment: f5
 author:
   - Tim Rupp (@caphrim007)
@@ -134,14 +135,12 @@ class Parameters(AnsibleF5Parameters):
 
         :return:
         """
-        p = subprocess.Popen(
-            ['rpm', '-qp', '--queryformat', '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}', self.package],
-            stdout=subprocess.PIPE
-        )
+        cmd = ['rpm', '-qp', '--queryformat', '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}', self.package]
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE)
         stdout, stderr = p.communicate()
         if not stdout:
-            return self.package_file
-        return stdout
+            return str(self.package_file)
+        return stdout.decode('utf-8')
 
     @property
     def package_root(self):
@@ -321,6 +320,16 @@ class ArgumentSpec(object):
         ]
 
 
+def cleanup_tokens(client):
+    try:
+        resource = client.api.shared.authz.tokens_s.token.load(
+            name=client.api.icrs.token
+        )
+        resource.delete()
+    except Exception:
+        pass
+
+
 def main():
     if not HAS_F5SDK:
         raise F5ModuleError("The python f5-sdk module is required")
@@ -337,8 +346,10 @@ def main():
     try:
         mm = ModuleManager(client)
         results = mm.exec_module()
+        cleanup_tokens(client)
         client.module.exit_json(**results)
     except F5ModuleError as e:
+        cleanup_tokens(client)
         client.module.fail_json(msg=str(e))
 
 if __name__ == '__main__':

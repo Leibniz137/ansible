@@ -27,6 +27,7 @@ import pwd
 import re
 import time
 
+from functools import wraps
 from io import StringIO
 from numbers import Number
 
@@ -157,6 +158,26 @@ def _count_newlines_from_end(in_str):
         return i
 
 
+def tests_as_filters_warning(name, func):
+    '''
+    Closure to enable displaying a deprecation warning when tests are used as a filter
+
+    This closure is only used when registering ansible provided tests as filters
+
+    This function should be removed in 2.9 along with registering ansible provided tests as filters
+    in Templar._get_filters
+    '''
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        display.deprecated(
+            'Using tests as filters is deprecated. Instead of using `result|%(name)s` instead use '
+            '`result is %(name)s`' % dict(name=name),
+            version='2.9'
+        )
+        return func(*args, **kwargs)
+    return wrapper
+
+
 class AnsibleContext(Context):
     '''
     A custom context, which intercepts resolve() calls and sets a flag
@@ -283,7 +304,10 @@ class Templar:
         self._filters = dict()
         for fp in plugins:
             self._filters.update(fp.filters())
-        self._filters.update(self._get_tests())
+
+        # TODO: Remove registering tests as filters in 2.9
+        for name, func in self._get_tests().items():
+            self._filters[name] = tests_as_filters_warning(name, func)
 
         return self._filters.copy()
 
@@ -579,6 +603,11 @@ class Templar:
     def _fail_lookup(self, name, *args, **kwargs):
         raise AnsibleError("The lookup `%s` was found, however lookups were disabled from templating" % name)
 
+    def _query_lookup(self, name, *args, **kwargs):
+        ''' wrapper for lookup, force wantlist true'''
+        kwargs['wantlist'] = True
+        return self._lookup(name, *args, **kwargs)
+
     def _lookup(self, name, *args, **kwargs):
         instance = self._lookup_loader.get(name.lower(), loader=self._loader, templar=self)
 
@@ -661,9 +690,10 @@ class Templar:
                     return data
 
             if disable_lookups:
-                t.globals['lookup'] = self._fail_lookup
+                t.globals['query'] = t.globals['q'] = t.globals['lookup'] = self._fail_lookup
             else:
                 t.globals['lookup'] = self._lookup
+                t.globals['query'] = t.globals['q'] = self._query_lookup
 
             t.globals['finalize'] = self._finalize
 

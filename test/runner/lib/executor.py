@@ -103,6 +103,7 @@ SUPPORTED_PYTHON_VERSIONS = (
     '2.7',
     '3.5',
     '3.6',
+    '3.7',
 )
 
 COMPILE_PYTHON_VERSIONS = SUPPORTED_PYTHON_VERSIONS
@@ -405,7 +406,7 @@ def network_start(args, platform, version):
     :type version: str
     :rtype: AnsibleCoreCI
     """
-    core_ci = AnsibleCoreCI(args, platform, version, stage=args.remote_stage)
+    core_ci = AnsibleCoreCI(args, platform, version, stage=args.remote_stage, provider=args.remote_provider)
     core_ci.start()
 
     return core_ci.save()
@@ -419,7 +420,7 @@ def network_run(args, platform, version, config):
     :type config: dict[str, str]
     :rtype: AnsibleCoreCI
     """
-    core_ci = AnsibleCoreCI(args, platform, version, stage=args.remote_stage, load=False)
+    core_ci = AnsibleCoreCI(args, platform, version, stage=args.remote_stage, provider=args.remote_provider, load=False)
     core_ci.load(config)
     core_ci.wait()
 
@@ -440,7 +441,7 @@ def network_inventory(remotes):
         options = dict(
             ansible_host=remote.connection.hostname,
             ansible_user=remote.connection.username,
-            ansible_ssh_private_key_file=remote.ssh_key.key,
+            ansible_ssh_private_key_file=os.path.abspath(remote.ssh_key.key),
             ansible_network_os=remote.platform,
             ansible_connection='local'
         )
@@ -547,7 +548,7 @@ def windows_start(args, version):
     :type version: str
     :rtype: AnsibleCoreCI
     """
-    core_ci = AnsibleCoreCI(args, 'windows', version, stage=args.remote_stage)
+    core_ci = AnsibleCoreCI(args, 'windows', version, stage=args.remote_stage, provider=args.remote_provider)
     core_ci.start()
 
     return core_ci.save()
@@ -560,7 +561,7 @@ def windows_run(args, version, config):
     :type config: dict[str, str]
     :rtype: AnsibleCoreCI
     """
-    core_ci = AnsibleCoreCI(args, 'windows', version, stage=args.remote_stage, load=False)
+    core_ci = AnsibleCoreCI(args, 'windows', version, stage=args.remote_stage, provider=args.remote_provider, load=False)
     core_ci.load(config)
     core_ci.wait()
 

@@ -30,6 +30,7 @@ All modules must have the following sections defined in this order:
   If you look at some existing older modules, you may find imports at the bottom of the file. Do not copy that idiom into new modules as it is a historical oddity due to how modules used to be combined with libraries. Over time we're moving the imports to be in their proper place.
 
 
+.. _copyright:
 
 Copyright
 ----------------------
@@ -381,8 +382,8 @@ Starting with Ansible version 2.2, all new modules are required to use imports i
 
    The use of "wildcard" imports such as ``from module_utils.basic import *`` is no longer allowed.
 
-Formatting options
-------------------
+Formatting functions
+--------------------
 
 These formatting functions are ``U()`` for URLs, ``I()`` for option names, ``C()`` for files and option values and ``M()`` for module names.
 Module names should be specified as ``M(module)`` to create a link to the online documentation for that module.

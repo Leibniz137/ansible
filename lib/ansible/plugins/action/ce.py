@@ -26,8 +26,8 @@ from ansible import constants as C
 from ansible.module_utils._text import to_text
 from ansible.module_utils.connection import Connection
 from ansible.plugins.action.normal import ActionModule as _ActionModule
-from ansible.module_utils.ce import ce_provider_spec
-from ansible.module_utils.network_common import load_provider
+from ansible.module_utils.network.cloudengine.ce import ce_provider_spec
+from ansible.module_utils.network.common.utils import load_provider
 
 
 try:
@@ -65,8 +65,7 @@ class ActionModule(_ActionModule):
                 host=pc.remote_addr,
                 port=pc.port,
                 username=pc.remote_user,
-                password=pc.password,
-                ssh_keyfile=pc.private_key_file
+                password=pc.password
             )
             display.vvv('using connection plugin %s' % pc.connection, pc.remote_addr)
             connection = self._shared_loader_obj.connection_loader.get('persistent', pc, sys.stdin)
@@ -91,6 +90,7 @@ class ActionModule(_ActionModule):
 
         # make sure a transport value is set in args
         self._task.args['transport'] = transport
+        self._task.args['provider'] = provider
 
         result = super(ActionModule, self).run(tmp, task_vars)
         return result

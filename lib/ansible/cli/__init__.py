@@ -323,11 +323,11 @@ class CLI(with_metaclass(ABCMeta, object)):
         try:
             if op.ask_pass:
                 sshpass = getpass.getpass(prompt="SSH password: ")
-                become_prompt = "%s password[defaults to SSH password]: " % op.become_method.upper()
+                become_prompt = "BECOME password[defaults to SSH password]: "
                 if sshpass:
                     sshpass = to_bytes(sshpass, errors='strict', nonstring='simplerepr')
             else:
-                become_prompt = "%s password: " % op.become_method.upper()
+                become_prompt = "BECOME password: "
 
             if op.become_ask_pass:
                 becomepass = getpass.getpass(prompt=become_prompt)
@@ -413,7 +413,7 @@ class CLI(with_metaclass(ABCMeta, object)):
     @staticmethod
     def base_parser(usage="", output_opts=False, runas_opts=False, meta_opts=False, runtask_opts=False, vault_opts=False, module_opts=False,
                     async_opts=False, connect_opts=False, subset_opts=False, check_opts=False, inventory_opts=False, epilog=None, fork_opts=False,
-                    runas_prompt_opts=False, desc=None, basedir_opts=False):
+                    runas_prompt_opts=False, desc=None, basedir_opts=False, vault_rekey_opts=False):
         ''' create an options parser for most ansible scripts '''
 
         # base opts
@@ -446,10 +446,12 @@ class CLI(with_metaclass(ABCMeta, object)):
                               help='ask for vault password')
             parser.add_option('--vault-password-file', default=[], dest='vault_password_files',
                               help="vault password file", action="callback", callback=CLI.unfrack_paths, type='string')
-            parser.add_option('--new-vault-password-file', default=[], dest='new_vault_password_files',
-                              help="new vault password file for rekey", action="callback", callback=CLI.unfrack_paths, type='string')
             parser.add_option('--vault-id', default=[], dest='vault_ids', action='append', type='string',
                               help='the vault identity to use')
+
+        if vault_rekey_opts:
+            parser.add_option('--new-vault-password-file', default=[], dest='new_vault_password_files',
+                              help="new vault password file for rekey", action="callback", callback=CLI.unfrack_paths, type='string')
             parser.add_option('--new-vault-id', default=None, dest='new_vault_id', type='string',
                               help='the new vault identity to use for rekey')
 
@@ -804,3 +806,20 @@ class CLI(with_metaclass(ABCMeta, object)):
         variable_manager.options_vars = load_options_vars(options, CLI.version_info(gitinfo=False))
 
         return loader, inventory, variable_manager
+
+    @staticmethod
+    def get_host_list(inventory, subset, pattern='all'):
+
+        no_hosts = False
+        if len(inventory.list_hosts()) == 0:
+            # Empty inventory
+            display.warning("provided hosts list is empty, only localhost is available. Note that the implicit localhost does not match 'all'")
+            no_hosts = True
+
+        inventory.subset(subset)
+
+        hosts = inventory.list_hosts(pattern)
+        if len(hosts) == 0 and no_hosts is False:
+            raise AnsibleError("Specified hosts and/or --limit does not match any hosts")
+
+        return hosts

@@ -74,7 +74,35 @@ class TestIosConfigModule(TestIosModule):
         self.run_commands.return_value = "Hostname foo"
         set_module_args(dict(save_when='always'))
         self.execute_module(changed=True)
-        self.assertEqual(self.run_commands.call_count, 2)
+        self.assertEqual(self.run_commands.call_count, 1)
+        self.assertEqual(self.get_config.call_count, 0)
+        self.assertEqual(self.load_config.call_count, 0)
+        args = self.run_commands.call_args[0][1]
+        self.assertIn('copy running-config startup-config\r', args)
+
+    def test_ios_config_save_changed_true(self):
+        src = load_fixture('ios_config_src.cfg')
+        set_module_args(dict(src=src, save_when='changed'))
+        commands = ['hostname foo', 'interface GigabitEthernet0/0', 'no ip address']
+        self.execute_module(changed=True, commands=commands)
+        self.assertEqual(self.run_commands.call_count, 1)
+        self.assertEqual(self.get_config.call_count, 1)
+        self.assertEqual(self.load_config.call_count, 1)
+        args = self.run_commands.call_args[0][1]
+        self.assertIn('copy running-config startup-config\r', args)
+
+    def test_aruba_config_save_changed_false(self):
+        set_module_args(dict(save_when='changed'))
+        self.execute_module(changed=False)
+        self.assertEqual(self.run_commands.call_count, 0)
+        self.assertEqual(self.get_config.call_count, 0)
+        self.assertEqual(self.load_config.call_count, 0)
+
+    def test_ios_config_save(self):
+        self.run_commands.return_value = "hostname foo"
+        set_module_args(dict(save=True))
+        self.execute_module(changed=True)
+        self.assertEqual(self.run_commands.call_count, 1)
         self.assertEqual(self.get_config.call_count, 0)
         self.assertEqual(self.load_config.call_count, 0)
         args = self.run_commands.call_args[0][1]
@@ -146,3 +174,33 @@ class TestIosConfigModule(TestIosModule):
         set_module_args(dict(lines=lines, parents=parents, match='exact'))
         commands = parents + lines
         self.execute_module(changed=True, commands=commands, sort=False)
+
+    def test_ios_config_src_and_lines_fails(self):
+        args = dict(src='foo', lines='foo')
+        set_module_args(args)
+        result = self.execute_module(failed=True)
+
+    def test_ios_config_src_and_parents_fails(self):
+        args = dict(src='foo', parents='foo')
+        set_module_args(args)
+        result = self.execute_module(failed=True)
+
+    def test_ios_config_match_exact_requires_lines(self):
+        args = dict(match='exact')
+        set_module_args(args)
+        result = self.execute_module(failed=True)
+
+    def test_ios_config_match_strict_requires_lines(self):
+        args = dict(match='strict')
+        set_module_args(args)
+        result = self.execute_module(failed=True)
+
+    def test_ios_config_replace_block_requires_lines(self):
+        args = dict(replace='block')
+        set_module_args(args)
+        result = self.execute_module(failed=True)
+
+    def test_ios_config_replace_config_requires_src(self):
+        args = dict(replace='config')
+        set_module_args(args)
+        result = self.execute_module(failed=True)

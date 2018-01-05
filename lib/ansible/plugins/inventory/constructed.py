@@ -10,11 +10,11 @@ DOCUMENTATION = '''
     version_added: "2.4"
     short_description: Uses Jinja2 to construct vars and groups based on existing inventory.
     description:
-        - Uses a YAML configuration file with a valid YAML or ``.config`` extension to define var expressions and group conditionals
+        - Uses a YAML configuration file with a valid YAML or C(.config) extension to define var expressions and group conditionals
         - The Jinja2 conditionals that qualify a host for membership.
         - The JInja2 exprpessions are calculated and assigned to the variables
         - Only variables already available from previous inventories or the fact cache can be used for templating.
-        - When ``strict`` is False, failed expressions will be ignored (assumes vars were missing).
+        - When I(strict) is False, failed expressions will be ignored (assumes vars were missing).
     extends_documentation_fragment:
       - constructed
 '''
@@ -91,7 +91,7 @@ class InventoryModule(BaseInventoryPlugin, Constructable):
 
         self._read_config_data(path)
 
-        strict = self._options['strict']
+        strict = self.get_option('strict')
         fact_cache = FactCache()
         try:
             # Go over hosts (less var copies)
@@ -103,7 +103,7 @@ class InventoryModule(BaseInventoryPlugin, Constructable):
                     hostvars = combine_vars(hostvars, fact_cache[host])
 
                 # create composite vars
-                self._set_composite_vars(self._options['compose'], hostvars, host, strict=strict)
+                self._set_composite_vars(self.get_option('compose'), hostvars, host, strict=strict)
 
                 # refetch host vars in case new ones have been created above
                 hostvars = inventory.hosts[host].get_vars()
@@ -111,10 +111,10 @@ class InventoryModule(BaseInventoryPlugin, Constructable):
                     hostvars = combine_vars(hostvars, self._cache[host])
 
                 # constructed groups based on conditionals
-                self._add_host_to_composed_groups(self._options['groups'], hostvars, host, strict=strict)
+                self._add_host_to_composed_groups(self.get_option('groups'), hostvars, host, strict=strict)
 
                 # constructed groups based variable values
-                self._add_host_to_keyed_groups(self._options['keyed_groups'], hostvars, host, strict=strict)
+                self._add_host_to_keyed_groups(self.get_option('keyed_groups'), hostvars, host, strict=strict)
 
         except Exception as e:
             raise AnsibleParserError("failed to parse %s: %s " % (to_native(path), to_native(e)))

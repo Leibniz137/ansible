@@ -36,6 +36,8 @@ short_description: Manage Cisco NSO configuration and service synchronization.
 description:
   - This module provides support for managing configuration in Cisco NSO and
     can also ensure services are in sync.
+requirements:
+  - Cisco NSO version 4.4.3 or higher.
 author: "Claes Nästén (@cnasten)"
 options:
   data:
@@ -135,9 +137,9 @@ diffs:
             type: string
 '''
 
-from ansible.module_utils.nso import connect, verify_version, nso_argument_spec
-from ansible.module_utils.nso import State, ValueBuilder
-from ansible.module_utils.nso import ModuleFailException, NsoException
+from ansible.module_utils.network.nso.nso import connect, verify_version, nso_argument_spec
+from ansible.module_utils.network.nso.nso import State, ValueBuilder
+from ansible.module_utils.network.nso.nso import ModuleFailException, NsoException
 from ansible.module_utils.basic import AnsibleModule
 
 

@@ -70,7 +70,7 @@ BLACKLIST_IMPORTS = {
                     'ansible.module_utils.urls instead')
         }
     },
-    'boto(?:\.|$)': {
+    r'boto(?:\.|$)': {
         'new_only': True,
         'error': {
             'code': 204,
@@ -375,14 +375,24 @@ class ModuleValidator(Validator):
                 msg='sys.exit() call found. Should be exit_json/fail_json'
             )
 
-    def _check_for_gpl3_header(self):
-        if ('GNU General Public License' not in self.text and
-                'version 3' not in self.text):
+    def _check_gpl3_header(self):
+        header = '\n'.join(self.text.split('\n')[:20])
+        if ('GNU General Public License' not in header or
+                ('version 3' not in header and 'v3.0' not in header)):
             self.reporter.error(
                 path=self.object_path,
                 code=105,
-                msg='GPLv3 license header not found'
+                msg='GPLv3 license header not found in the first 20 lines of the module'
             )
+        elif self._is_new_module():
+            if len([line for line in header
+                    if 'GNU General Public License' in line]) > 1:
+                self.reporter.error(
+                    path=self.object_path,
+                    code=108,
+                    msg='Found old style GPLv3 license header: '
+                        'https://docs.ansible.com/ansible/devel/dev_guide/developing_modules_documenting.html#copyright'
+                )
 
     def _check_for_tabs(self):
         for line_no, line in enumerate(self.text.splitlines()):
@@ -550,7 +560,7 @@ class ModuleValidator(Validator):
                 self.reporter.warning(
                     path=self.object_path,
                     code=291,
-                    msg='Found Try/Except block without HAS_ assginment'
+                    msg='Found Try/Except block without HAS_ assignment'
                 )
 
     def _ensure_imports_below_docs(self, doc_info, first_callable):
@@ -814,12 +824,11 @@ class ModuleValidator(Validator):
                             msg='Unknown DOCUMENTATION error, see TRACE'
                         )
 
-                if 'options' in doc and doc['options'] is None and doc.get('extends_documentation_fragment'):
+                if 'options' in doc and doc['options'] is None:
                     self.reporter.error(
                         path=self.object_path,
-                        code=304,
-                        msg=('DOCUMENTATION.options must be a dictionary/hash when used '
-                             'with DOCUMENTATION.extends_documentation_fragment')
+                        code=320,
+                        msg='DOCUMENTATION.options must be a dictionary/hash when used',
                     )
 
                 if self.object_name.startswith('_') and not os.path.islink(self.object_path):
@@ -980,7 +989,7 @@ class ModuleValidator(Validator):
         with CaptureStd():
             try:
                 existing_doc, _, _, _ = get_docstring(self.base_module, verbose=True)
-                existing_options = existing_doc.get('options', {})
+                existing_options = existing_doc.get('options', {}) or {}
             except AssertionError:
                 fragment = doc['extends_documentation_fragment']
                 self.reporter.warning(
@@ -1010,7 +1019,7 @@ class ModuleValidator(Validator):
         except ValueError:
             mod_version_added = StrictVersion('0.0')
 
-        options = doc.get('options', {})
+        options = doc.get('options', {}) or {}
 
         should_be = '.'.join(ansible_version.split('.')[:2])
         strict_ansible_version = StrictVersion(should_be)
@@ -1119,7 +1128,7 @@ class ModuleValidator(Validator):
             self._validate_ps_replacers()
             self._find_ps_docs_py_file()
 
-        self._check_for_gpl3_header()
+        self._check_gpl3_header()
         if not self._just_docs():
             self._check_interpreter(powershell=self._powershell_module())
             self._check_type_instead_of_isinstance(

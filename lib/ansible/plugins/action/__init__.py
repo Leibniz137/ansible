@@ -36,7 +36,6 @@ from ansible.module_utils.json_utils import _filter_non_json_lines
 from ansible.module_utils.six import binary_type, string_types, text_type, iteritems, with_metaclass
 from ansible.module_utils.six.moves import shlex_quote
 from ansible.module_utils._text import to_bytes, to_native, to_text
-from ansible.module_utils.connection import Connection
 from ansible.parsing.utils.jsonify import jsonify
 from ansible.release import __version__
 from ansible.utils.unsafe_proxy import wrap_var
@@ -93,11 +92,11 @@ class ActionBase(with_metaclass(ABCMeta, object)):
 
         result = {}
 
-        if self._task.async and not self._supports_async:
+        if self._task.async_val and not self._supports_async:
             raise AnsibleActionFail('async is not supported for this task.')
         elif self._play_context.check_mode and not self._supports_check_mode:
             raise AnsibleActionSkip('check mode is not supported for this task.')
-        elif self._task.async and self._play_context.check_mode:
+        elif self._task.async_val and self._play_context.check_mode:
             raise AnsibleActionFail('check mode and async cannot be used on same task.')
 
         return result
@@ -158,9 +157,12 @@ class ActionBase(with_metaclass(ABCMeta, object)):
         self._compute_environment_string(final_environment)
 
         (module_data, module_style, module_shebang) = modify_module(module_name, module_path, module_args,
-                                                                    task_vars=task_vars, module_compression=self._play_context.module_compression,
-                                                                    async_timeout=self._task.async, become=self._play_context.become,
-                                                                    become_method=self._play_context.become_method, become_user=self._play_context.become_user,
+                                                                    task_vars=task_vars, templar=self._templar,
+                                                                    module_compression=self._play_context.module_compression,
+                                                                    async_timeout=self._task.async_val,
+                                                                    become=self._play_context.become,
+                                                                    become_method=self._play_context.become_method,
+                                                                    become_user=self._play_context.become_user,
                                                                     become_password=self._play_context.become_pass,
                                                                     environment=final_environment)
 
@@ -177,10 +179,9 @@ class ActionBase(with_metaclass(ABCMeta, object)):
             if not isinstance(environments, list):
                 environments = [environments]
 
-            # the environments as inherited need to be reversed, to make
-            # sure we merge in the parent's values first so those in the
-            # block then task 'win' in precedence
-            environments.reverse()
+            # The order of environments matters to make sure we merge
+            # in the parent's values first so those in the block then
+            # task 'win' in precedence
             for environment in environments:
                 if environment is None or len(environment) == 0:
                     continue
@@ -218,7 +219,7 @@ class ActionBase(with_metaclass(ABCMeta, object)):
             self._play_context.pipelining or self._connection.always_pipeline_modules,  # pipelining enabled for play or connection requires it (eg winrm)
             module_style == "new",                     # old style modules do not support pipelining
             not C.DEFAULT_KEEP_REMOTE_FILES,           # user wants remote files
-            not wrap_async,                            # async does not support pipelining
+            not wrap_async or self._connection.always_pipeline_modules,  # async does not normally support pipelining unless it does (eg winrm)
             self._play_context.become_method != 'su',  # su does not work with pipelining,
             # FIXME: we might need to make become_method exclusion a configurable list
         ]:
@@ -478,7 +479,6 @@ class ActionBase(with_metaclass(ABCMeta, object)):
         module_args = dict(
             path=path,
             follow=follow,
-            get_md5=False,
             get_checksum=checksum,
             checksum_algo='sha1',
         )
@@ -694,7 +694,7 @@ class ActionBase(with_metaclass(ABCMeta, object)):
         in_data = None
         cmd = ""
 
-        if wrap_async:
+        if wrap_async and not self._connection.always_pipeline_modules:
             # configure, upload, and chmod the async_wrapper module
             (async_module_style, shebang, async_module_data, async_module_path) = self._configure_module(module_name='async_wrapper', module_args=dict(),
                                                                                                          task_vars=task_vars)
@@ -703,7 +703,7 @@ class ActionBase(with_metaclass(ABCMeta, object)):
             self._transfer_data(remote_async_module_path, async_module_data)
             remote_files.append(remote_async_module_path)
 
-            async_limit = self._task.async
+            async_limit = self._task.async_val
             async_jid = str(random.randint(0, 999999999999))
 
             # call the interpreter for async_wrapper directly

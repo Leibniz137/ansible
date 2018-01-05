@@ -61,7 +61,7 @@ import errno
 import datetime
 from collections import deque
 from collections import Mapping, MutableMapping, Sequence, MutableSequence, Set, MutableSet
-from itertools import repeat, chain
+from itertools import chain, repeat
 
 try:
     import syslog
@@ -111,6 +111,11 @@ except ImportError:
     except SyntaxError:
         print('\n{"msg": "SyntaxError: probably due to installed simplejson being for a different python version", "failed": true}')
         sys.exit(1)
+    else:
+        sj_version = json.__version__.split('.')
+        if sj_version < ['1', '6']:
+            # Version 1.5 released 2007-01-18 does not have the encoding parameter which we need
+            print('\n{"msg": "Error: Ansible requires the stdlib json or simplejson >= 1.6.  Neither was found!", "failed": true}')
 
 AVAILABLE_HASH_ALGORITHMS = dict()
 try:
@@ -586,7 +591,7 @@ def human_to_bytes(number, default_unit=None, isbits=False):
     ex:
       human_to_bytes('10M') <=> human_to_bytes(10, 'M')
     '''
-    m = re.search('^\s*(\d*\.?\d*)\s*([A-Za-z]+)?', str(number), flags=re.IGNORECASE)
+    m = re.search(r'^\s*(\d*\.?\d*)\s*([A-Za-z]+)?', str(number), flags=re.IGNORECASE)
     if m is None:
         raise ValueError("human_to_bytes() can't interpret following string: %s" % str(number))
     try:
@@ -736,20 +741,37 @@ def get_flags_from_attributes(attributes):
     return ''.join(flags)
 
 
+def _json_encode_fallback(obj):
+    if isinstance(obj, Set):
+        return list(obj)
+    elif isinstance(obj, datetime.datetime):
+        return obj.isoformat()
+    raise TypeError("Cannot json serialize %s" % to_native(obj))
+
+
+def jsonify(data, **kwargs):
+    for encoding in ("utf-8", "latin-1"):
+        try:
+            return json.dumps(data, encoding=encoding, default=_json_encode_fallback, **kwargs)
+        # Old systems using old simplejson module does not support encoding keyword.
+        except TypeError:
+            try:
+                new_data = json_dict_bytes_to_unicode(data, encoding=encoding)
+            except UnicodeDecodeError:
+                continue
+            return json.dumps(new_data, default=_json_encode_fallback, **kwargs)
+        except UnicodeDecodeError:
+            continue
+    raise UnicodeError('Invalid unicode encoding encountered')
+
+
 class AnsibleFallbackNotFound(Exception):
     pass
 
 
-class _SetEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, Set):
-            return list(obj)
-        return super(_SetEncoder, self).default(obj)
-
-
 class AnsibleModule(object):
     def __init__(self, argument_spec, bypass_checks=False, no_log=False,
-                 check_invalid_arguments=True, mutually_exclusive=None, required_together=None,
+                 check_invalid_arguments=None, mutually_exclusive=None, required_together=None,
                  required_one_of=None, add_file_common_args=False, supports_check_mode=False,
                  required_if=None):
 
@@ -765,7 +787,15 @@ class AnsibleModule(object):
         self.check_mode = False
         self.bypass_checks = bypass_checks
         self.no_log = no_log
+
+        # Check whether code set this explicitly for deprecation purposes
+        if check_invalid_arguments is None:
+            check_invalid_arguments = True
+            module_set_check_invalid_arguments = False
+        else:
+            module_set_check_invalid_arguments = True
         self.check_invalid_arguments = check_invalid_arguments
+
         self.mutually_exclusive = mutually_exclusive
         self.required_together = required_together
         self.required_one_of = required_one_of
@@ -853,6 +883,15 @@ class AnsibleModule(object):
 
         # finally, make sure we're in a sane working dir
         self._set_cwd()
+
+        # Do this at the end so that logging parameters have been set up
+        # This is to warn third party module authors that the functionatlity is going away.
+        # We exclude uri and zfs as they have their own deprecation warnings for users and we'll
+        # make sure to update their code to stop using check_invalid_arguments when 2.9 rolls around
+        if module_set_check_invalid_arguments and self._name not in ('uri', 'zfs'):
+            self.deprecate('Setting check_invalid_arguments is deprecated and will be removed.'
+                           ' Update the code for this module  In the future, AnsibleModule will'
+                           ' always check for invalid arguments.', version='2.9')
 
     def warn(self, warning):
 
@@ -1042,6 +1081,10 @@ class AnsibleModule(object):
 
         if not HAVE_SELINUX or not self.selinux_enabled():
             return changed
+
+        if self.check_file_absent_if_check_mode(path):
+            return True
+
         cur_context = self.selinux_context(path)
         new_context = list(cur_context)
         # Iterate over the current context instead of the
@@ -1080,11 +1123,17 @@ class AnsibleModule(object):
         return changed
 
     def set_owner_if_different(self, path, owner, changed, diff=None, expand=True):
+
+        if owner is None:
+            return changed
+
         b_path = to_bytes(path, errors='surrogate_or_strict')
         if expand:
             b_path = os.path.expanduser(os.path.expandvars(b_path))
-        if owner is None:
-            return changed
+
+        if self.check_file_absent_if_check_mode(b_path):
+            return True
+
         orig_uid, orig_gid = self.user_and_group(b_path, expand)
         try:
             uid = int(owner)
@@ -1115,11 +1164,17 @@ class AnsibleModule(object):
         return changed
 
     def set_group_if_different(self, path, group, changed, diff=None, expand=True):
+
+        if group is None:
+            return changed
+
         b_path = to_bytes(path, errors='surrogate_or_strict')
         if expand:
             b_path = os.path.expanduser(os.path.expandvars(b_path))
-        if group is None:
-            return changed
+
+        if self.check_file_absent_if_check_mode(b_path):
+            return True
+
         orig_uid, orig_gid = self.user_and_group(b_path, expand)
         try:
             gid = int(group)
@@ -1150,13 +1205,17 @@ class AnsibleModule(object):
         return changed
 
     def set_mode_if_different(self, path, mode, changed, diff=None, expand=True):
+
+        if mode is None:
+            return changed
+
         b_path = to_bytes(path, errors='surrogate_or_strict')
         if expand:
             b_path = os.path.expanduser(os.path.expandvars(b_path))
         path_stat = os.lstat(b_path)
 
-        if mode is None:
-            return changed
+        if self.check_file_absent_if_check_mode(b_path):
+            return True
 
         if not isinstance(mode, int):
             try:
@@ -1234,6 +1293,9 @@ class AnsibleModule(object):
         if expand:
             b_path = os.path.expanduser(os.path.expandvars(b_path))
 
+        if self.check_file_absent_if_check_mode(b_path):
+            return True
+
         existing = self.get_file_attributes(b_path)
 
         if existing.get('attr_flags', '') != attributes:
@@ -1256,9 +1318,8 @@ class AnsibleModule(object):
                         if rc != 0 or err:
                             raise Exception("Error while setting attributes: %s" % (out + err))
                     except Exception as e:
-                        path = to_text(b_path)
-                        self.fail_json(path=path, msg='chattr failed', details=to_native(e),
-                                       exception=traceback.format_exc())
+                        self.fail_json(path=to_text(b_path), msg='chattr failed',
+                                       details=to_native(e), exception=traceback.format_exc())
         return changed
 
     def get_file_attributes(self, path):
@@ -1269,7 +1330,7 @@ class AnsibleModule(object):
             try:
                 rc, out, err = self.run_command(attrcmd)
                 if rc == 0:
-                    res = out.split(' ')[0:2]
+                    res = out.split()
                     output['attr_flags'] = res[1].replace('-', '').strip()
                     output['version'] = res[0].strip()
                     output['attributes'] = format_attributes(output['attr_flags'])
@@ -1428,6 +1489,9 @@ class AnsibleModule(object):
             file_args['path'], file_args['attributes'], changed, diff, expand
         )
         return changed
+
+    def check_file_absent_if_check_mode(self, file_path):
+        return self.check_mode and not os.path.exists(file_path)
 
     def set_directory_attributes_if_different(self, file_args, changed, diff=None, expand=True):
         return self.set_fs_attributes_if_different(file_args, changed, diff, expand)
@@ -1902,7 +1966,7 @@ class AnsibleModule(object):
             wanted = v.get('type', None)
             if wanted == 'dict' or (wanted == 'list' and v.get('elements', '') == 'dict'):
                 spec = v.get('options', None)
-                if spec is None or not params[k]:
+                if spec is None or k not in params or params[k] is None:
                     continue
 
                 self._options_context.append(k)
@@ -2180,19 +2244,10 @@ class AnsibleModule(object):
             self.fail_json(msg=to_native(e))
 
     def jsonify(self, data):
-        for encoding in ("utf-8", "latin-1"):
-            try:
-                return json.dumps(data, encoding=encoding, cls=_SetEncoder)
-            # Old systems using old simplejson module does not support encoding keyword.
-            except TypeError:
-                try:
-                    new_data = json_dict_bytes_to_unicode(data, encoding=encoding)
-                except UnicodeDecodeError:
-                    continue
-                return json.dumps(new_data, cls=_SetEncoder)
-            except UnicodeDecodeError:
-                continue
-        self.fail_json(msg='Invalid unicode encoding encountered')
+        try:
+            return jsonify(data)
+        except UnicodeError as e:
+            self.fail_json(msg=to_text(e))
 
     def from_json(self, data):
         return json.loads(data)
@@ -2378,8 +2433,7 @@ class AnsibleModule(object):
 
         # Set the attributes
         current_attribs = self.get_file_attributes(src)
-        current_attribs = current_attribs.get('attr_flags', [])
-        current_attribs = ''.join(current_attribs)
+        current_attribs = current_attribs.get('attr_flags', '')
         self.set_attributes_if_different(dest, current_attribs, True)
 
     def atomic_move(self, src, dest, unsafe_writes=False):

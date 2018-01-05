@@ -29,7 +29,7 @@ DOCUMENTATION = """
       remote_user:
         description:
             - User to login/authenticate as
-            - Can be set from the CLI via the ``--user`` or ``-u`` options.
+            - Can be set from the CLI via the C(--user) or C(-u) options.
         vars:
             - name: ansible_user
             - name: ansible_ssh_user
@@ -47,7 +47,7 @@ DOCUMENTATION = """
       password:
         description:
           - Secret used to either login the ssh server or as a passphrase for ssh keys that require it
-          - Can be set from the CLI via the ``--ask-pass`` option.
+          - Can be set from the CLI via the C(--ask-pass) option.
         vars:
             - name: ansible_password
             - name: ansible_ssh_pass
@@ -264,7 +264,7 @@ class Connection(ConnectionBase):
                 if proxy_command:
                     break
 
-        proxy_command = proxy_command or self._options['proxy_command']
+        proxy_command = proxy_command or self.get_option('proxy_command')
 
         sock_kwarg = {}
         if proxy_command:
@@ -299,7 +299,7 @@ class Connection(ConnectionBase):
 
         self.keyfile = os.path.expanduser("~/.ssh/known_hosts")
 
-        if self._options['host_key_checking']:
+        if self.get_option('host_key_checking'):
             for ssh_known_hosts in ("/etc/ssh/ssh_known_hosts", "/etc/openssh/ssh_known_hosts"):
                 try:
                     # TODO: check if we need to look at several possible locations, possible for loop
@@ -327,7 +327,7 @@ class Connection(ConnectionBase):
                 self._play_context.remote_addr,
                 username=self._play_context.remote_user,
                 allow_agent=allow_agent,
-                look_for_keys=self._options['look_for_keys'],
+                look_for_keys=self.get_option('look_for_keys'),
                 key_filename=key_filename,
                 password=self._play_context.password,
                 timeout=self._play_context.timeout,
@@ -371,7 +371,7 @@ class Connection(ConnectionBase):
         # sudo usually requires a PTY (cf. requiretty option), therefore
         # we give it one by default (pty=True in ansble.cfg), and we try
         # to initialise from the calling environment when sudoable is enabled
-        if self._options['pty'] and sudoable:
+        if self.get_option('pty') and sudoable:
             chan.get_pty(term=os.getenv('TERM', 'vt100'), width=int(os.getenv('COLUMNS', 0)), height=int(os.getenv('LINES', 0)))
 
         display.vvv("EXEC %s" % cmd, host=self._play_context.remote_addr)
@@ -414,7 +414,7 @@ class Connection(ConnectionBase):
                     if self._play_context.become and self._play_context.become_pass:
                         chan.sendall(to_bytes(self._play_context.become_pass) + b'\n')
                     else:
-                        raise AnsibleError("A password is reqired but none was supplied")
+                        raise AnsibleError("A password is required but none was supplied")
                 else:
                     no_prompt_out += become_output
                     no_prompt_err += become_output
@@ -524,7 +524,7 @@ class Connection(ConnectionBase):
             if self.sftp is not None:
                 self.sftp.close()
 
-        if self._options['host_key_checking'] and self._options['record_host_keys'] and self._any_keys_added():
+        if self.get_option('host_key_checking') and self.get_option('record_host_keys') and self._any_keys_added():
 
             # add any new SSH host keys -- warning -- this could be slow
             # (This doesn't acquire the connection lock because it needs

@@ -1,5 +1,5 @@
 ---
-- debug: msg="START ios_interface cli/intent.yaml"
+- debug: msg="START ios_interface cli/intent.yaml on connection={{ ansible_connection }}"
 
 - name: Run show version
   ios_command:
@@ -21,7 +21,7 @@
     name: "{{ test_interface }}"
     state: up
     tx_rate: ge(0)
-    rx_rate: le(0)
+    rx_rate: ge(0)
     authorize: yes
   register: result
 
@@ -108,7 +108,7 @@
           - "result.failed == true"
           - "'host dummy_host' in result.failed_conditions"
           - "'port dummy_port' in result.failed_conditions"
-  when: '"netdev" in show_lldp_neighbors_result.stdout'
+  when: '"netdev" in show_lldp_neighbors_result.stdout[0]'
 
 - name: Aggregate config + intent (pass)
   ios_interface:
@@ -158,4 +158,4 @@
           - "result.failed == true"
           - "'host dummy_host' in result.failed_conditions"
           - "'port dummy_port' in result.failed_conditions"
-  when: "'netdev' in show_lldp_neighbors_result.stdout"
+  when: "'netdev' in show_lldp_neighbors_result.stdout[0]"

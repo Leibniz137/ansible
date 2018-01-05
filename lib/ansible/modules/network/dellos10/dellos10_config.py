@@ -49,7 +49,7 @@ options:
         or configuration template to load.  The path to the source file can
         either be the full path on the Ansible control host or a relative
         path from the playbook or role root directory.  This argument is mutually
-        exclusive with I(lines).
+        exclusive with I(lines), I(parents).
     required: false
     default: null
   before:
@@ -189,11 +189,11 @@ backup_path:
   sample: /playbooks/ansible/backup/dellos10_config.2016-07-16@22:28:34
 """
 from ansible.module_utils.basic import AnsibleModule
-from ansible.module_utils.dellos10 import get_config, get_sublevel_config
-from ansible.module_utils.dellos10 import dellos10_argument_spec, check_args
-from ansible.module_utils.dellos10 import load_config, run_commands
-from ansible.module_utils.dellos10 import WARNING_PROMPTS_RE
-from ansible.module_utils.netcfg import NetworkConfig, dumps
+from ansible.module_utils.network.dellos10.dellos10 import get_config, get_sublevel_config
+from ansible.module_utils.network.dellos10.dellos10 import dellos10_argument_spec, check_args
+from ansible.module_utils.network.dellos10.dellos10 import load_config, run_commands
+from ansible.module_utils.network.dellos10.dellos10 import WARNING_PROMPTS_RE
+from ansible.module_utils.network.common.config import NetworkConfig, dumps
 
 
 def get_candidate(module):
@@ -229,7 +229,8 @@ def main():
 
     argument_spec.update(dellos10_argument_spec)
 
-    mutually_exclusive = [('lines', 'src')]
+    mutually_exclusive = [('lines', 'src'),
+                          ('parents', 'src')]
 
     module = AnsibleModule(argument_spec=argument_spec,
                            mutually_exclusive=mutually_exclusive,
@@ -259,7 +260,8 @@ def main():
         configobjs = candidate.items
 
     if module.params['backup']:
-        result['__backup__'] = get_config(module)
+        if not module.check_mode:
+            result['__backup__'] = get_config(module)
 
     commands = list()
 

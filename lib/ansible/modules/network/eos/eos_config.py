@@ -270,11 +270,11 @@ backup_path:
   sample: /playbooks/ansible/backup/eos_config.2016-07-16@22:28:34
 """
 from ansible.module_utils.basic import AnsibleModule
-from ansible.module_utils.netcfg import NetworkConfig, dumps
-from ansible.module_utils.eos import get_config, load_config
-from ansible.module_utils.eos import run_commands
-from ansible.module_utils.eos import eos_argument_spec
-from ansible.module_utils.eos import check_args
+from ansible.module_utils.network.common.config import NetworkConfig, dumps
+from ansible.module_utils.network.eos.eos import get_config, load_config
+from ansible.module_utils.network.eos.eos import run_commands
+from ansible.module_utils.network.eos.eos import eos_argument_spec
+from ansible.module_utils.network.eos.eos import check_args
 
 
 def get_candidate(module):
@@ -336,6 +336,7 @@ def main():
     argument_spec.update(eos_argument_spec)
 
     mutually_exclusive = [('lines', 'src'),
+                          ('parents', 'src'),
                           ('save', 'save_when')]
 
     required_if = [('match', 'strict', ['lines']),
@@ -402,7 +403,6 @@ def main():
                 result['session'] = response['session']
 
             result['changed'] = True
-
 
     running_config = None
     startup_config = None

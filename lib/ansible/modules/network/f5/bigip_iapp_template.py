@@ -240,10 +240,10 @@ class Parameters(AnsibleF5Parameters):
         # There is a bug in the iApp parser in the F5 SDK that prevents us from
         # using it in all cases to get the name of an iApp. So we'll use this
         # pattern for now and file a bug with the F5 SDK
-        pattern = r'sys\s+application\s+template\s+(?P<path>\/\w+\/)?(?P<name>[\w.]+)'
+        pattern = r'sys\s+application\s+template\s+(?P<path>\/[^\{}"\'*?|#]+\/)?(?P<name>[^\{}"\'*?|#]+)'
         matches = re.search(pattern, self.content)
         try:
-            result = matches.group('name')
+            result = matches.group('name').strip()
         except IndexError:
             result = None
         if result:
@@ -451,10 +451,17 @@ class ArgumentSpec(object):
         self.f5_product_name = 'bigip'
 
 
-def main():
-    if not HAS_F5SDK:
-        raise F5ModuleError("The python f5-sdk module is required")
+def cleanup_tokens(client):
+    try:
+        resource = client.api.shared.authz.tokens_s.token.load(
+            name=client.api.icrs.token
+        )
+        resource.delete()
+    except Exception:
+        pass
 
+
+def main():
     spec = ArgumentSpec()
 
     client = AnsibleF5Client(
@@ -464,11 +471,17 @@ def main():
     )
 
     try:
+        if not HAS_F5SDK:
+            raise F5ModuleError("The python f5-sdk module is required")
+
         mm = ModuleManager(client)
         results = mm.exec_module()
+        cleanup_tokens(client)
         client.module.exit_json(**results)
     except F5ModuleError as e:
+        cleanup_tokens(client)
         client.module.fail_json(msg=str(e))
+
 
 if __name__ == '__main__':
     main()

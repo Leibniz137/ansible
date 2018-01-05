@@ -6,42 +6,155 @@ from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
 DOCUMENTATION = """
-    author: Ansible Networking Team
-    connection: network_cli
-    short_description: Use network_cli to run command on network appliances
+---
+author: Ansible Networking Team
+connection: network_cli
+short_description: Use network_cli to run command on network appliances
+description:
+  - This connection plugin provides a connection to remote devices over the
+    SSH and implements a CLI shell.  This connection plugin is typically used by
+    network devices for sending and receiving CLi commands to network devices.
+version_added: "2.3"
+options:
+  host:
     description:
-        - This plugin actually forces use of 'local' execution but using paramiko to establish a remote ssh shell on the appliance.
-        - Also this plugin ignores the become_method but still uses the becoe_user and become_pass to
-          do privilege escalation, method depending on network_os used.
-    version_added: "2.3"
-    options:
-      network_os:
-        description:
-            - Appliance specific OS
-        default: 'default'
-        vars:
-            - name: ansible_netconf_network_os
-      password:
-        description:
-            - Secret used to authenticate
-        vars:
-            - name: ansible_pass
-            - name: ansible_netconf_pass
-      private_key_file:
-        description:
-            - Key or certificate file used for authentication
-        ini:
-            - section: defaults
-              key: private_key_file
-        env:
-            - name: ANSIBLE_PRIVATE_KEY_FILE
-        vars:
-            - name: ansible_private_key_file
-      timeout:
-        type: int
-        description:
-          - Connection timeout in seconds
-        default: 120
+      - Specifies the remote device FQDN or IP address to establish the SSH
+        connection to.
+    default: inventory_hostname
+    vars:
+      - name: ansible_host
+  port:
+    type: int
+    description:
+      - Specifies the port on the remote device to listening for connections
+        when establishing the SSH connection.
+    default: 22
+    ini:
+      - section: defaults
+        key: remote_port
+    env:
+      - name: ANSIBLE_REMOTE_PORT
+    vars:
+      - name: ansible_port
+  network_os:
+    description:
+      - Configures the device platform network operating system.  This value is
+        used to load the correct terminal and cliconf plugins to communicate
+        with the remote device
+    default: null
+    vars:
+      - name: ansible_network_os
+  remote_user:
+    description:
+      - The username used to authenticate to the remote device when the SSH
+        connection is first established.  If the remote_user is not specified,
+        the connection will use the username of the logged in user.
+      - Can be configured form the CLI via the C(--user) or C(-u) options
+    ini:
+      - section: defaults
+        key: remote_user
+    env:
+      - name: ANSIBLE_REMOTE_USER
+    vars:
+      - name: ansible_user
+  password:
+    description:
+      - Configures the user password used to authenticate to the remote device
+        when first establishing the SSH connection.
+    vars:
+      - name: ansible_pass
+  private_key_file:
+    description:
+      - The private SSH key or certificate file used to to authenticate to the
+        remote device when first establishing the SSH connection.
+    ini:
+     section: defaults
+     key: private_key_file
+    env:
+      - name: ANSIBLE_PRIVATE_KEY_FILE
+    vars:
+      - name: ansible_private_key_file
+  timeout:
+    type: int
+    description:
+      - Sets the connection time, in seconds, for the communicating with the
+        remote device.  This timeout is used as the default timeout value for
+        commands when issuing a command to the network CLI.  If the command
+        does not return in timeout seconds, the an error is generated.
+    default: 120
+  become:
+    type: boolean
+    description:
+      - The become option will instruct the CLI session to attempt privilege
+        escalation on platforms that support it.  Normally this means
+        transitioning from user mode to C(enable) mode in the CLI session.
+        If become is set to True and the remote device does not support
+        privilege escalation or the privilege has already been elevated, then
+        this option is silently ignored
+      - Can be configured form the CLI via the C(--become) or C(-b) options
+    default: False
+    ini:
+      section: privilege_escalation
+      key: become
+    env:
+      - name: ANSIBLE_BECOME
+    vars:
+      - name: ansible_become
+  become_method:
+    description:
+      - This option allows the become method to be specified in for handling
+        privilege escalation.  Typically the become_method value is set to
+        C(enable) but could be defined as other values.
+    default: sudo
+    ini:
+      section: privilege_escalation
+      key: become_method
+    env:
+      - name: ANSIBLE_BECOME_METHOD
+    vars:
+      - name: ansible_become_method
+  host_key_auto_add:
+    type: boolean
+    description:
+      - By default, Ansible will prompt the user before adding SSH keys to the
+        known hosts file.  Since persistent connections such as network_cli run
+        in background processes, the user will never be prompted.  By enabling
+        this option, unknown host keys will automatically be added to the
+        known hosts file.
+      - Be sure to fully understand the security implications of enabling this
+        option on production systems as it could create a security vulnerability.
+    default: False
+    ini:
+      section: paramiko_connection
+      key: host_key_auto_add
+    env:
+      - name: ANSIBLE_HOST_KEY_AUTO_ADD
+  persistent_connect_timeout:
+    type: int
+    description:
+      - Configures, in seconds, the amount of time to wait when trying to
+        initially establish a persistent connection.  If this value expires
+        before the connection to the remote device is completed, the connection
+        will fail
+    default: 30
+    ini:
+      section: persistent_connection
+      key: persistent_connect_timeout
+    env:
+      - name: ANSIBLE_PERSISTENT_CONNECT_TIMEOUT
+  persistent_command_timeout:
+    type: int
+    description:
+      - Configures, in seconds, the amount of time to wait for a command to
+        return from the remote device.  If this timer is exceeded before the
+        command returns, the connection plugin will raise an exception and
+        close
+    default: 10
+    ini:
+      section: persistent_connection
+      key: persistent_command_timeout
+    env:
+      - name: ANSIBLE_PERSISTENT_COMMAND_TIMEOUT
 """
 
 import json
@@ -84,12 +197,15 @@ class Connection(ConnectionBase):
         self._matched_pattern = None
         self._last_response = None
         self._history = list()
+        self._play_context = play_context
 
         self._local = connection_loader.get('local', play_context, '/dev/null')
         self._local.set_options()
 
         self._terminal = None
         self._cliconf = None
+
+        self._ansible_playbook_pid = kwargs.get('ansible_playbook_pid')
 
         if self._play_context.verbosity > 3:
             logging.getLogger('paramiko').setLevel(logging.DEBUG)
@@ -105,6 +221,10 @@ class Connection(ConnectionBase):
                 raise AttributeError("'%s' object has no attribute '%s'" % (self.__class__.__name__, name))
             return getattr(self._cliconf, name)
 
+    def get_prompt(self):
+        """Returns the current prompt from the device"""
+        return self._matched_prompt
+
     def exec_command(self, cmd, in_data=None, sudoable=True):
         # this try..except block is just to handle the transition to supporting
         # network_cli as a toplevel connection.  Once connection=local is gone,
@@ -114,8 +234,10 @@ class Connection(ConnectionBase):
             try:
                 cmd = json.loads(to_text(cmd, errors='surrogate_or_strict'))
                 kwargs = {'command': to_bytes(cmd['command'], errors='surrogate_or_strict')}
-                for key in ('prompt', 'answer', 'send_only'):
-                    if cmd.get(key) is not None:
+                for key in ('prompt', 'answer', 'sendonly', 'newline'):
+                    if cmd.get(key) is True or cmd.get(key) is False:
+                        kwargs[key] = cmd[key]
+                    elif cmd.get(key) is not None:
                         kwargs[key] = to_bytes(cmd[key], errors='surrogate_or_strict')
                 return self.send(**kwargs)
             except ValueError:
@@ -144,11 +266,11 @@ class Connection(ConnectionBase):
         messages = ['updating play_context for connection']
         if self._play_context.become is False and play_context.become is True:
             auth_pass = play_context.become_pass
-            self._terminal.on_authorize(passwd=auth_pass)
+            self._terminal.on_become(passwd=auth_pass)
             messages.append('authorizing connection')
 
         elif self._play_context.become is True and not play_context.become:
-            self._terminal.on_deauthorize()
+            self._terminal.on_unbecome()
             messages.append('deauthorizing connection')
 
         self._play_context = play_context
@@ -162,7 +284,7 @@ class Connection(ConnectionBase):
             return
 
         p = connection_loader.get('paramiko', self._play_context, '/dev/null')
-        p.set_options(direct={'look_for_keys': bool(self._play_context.password and not self._play_context.private_key_file)})
+        p.set_options(direct={'look_for_keys': not bool(self._play_context.password and not self._play_context.private_key_file)})
         p.force_persistence = self.force_persistence
         ssh = p._connect()
 
@@ -196,9 +318,9 @@ class Connection(ConnectionBase):
         self._terminal.on_open_shell()
 
         if self._play_context.become and self._play_context.become_method == 'enable':
-            display.vvvv('firing event: on_authorize', host=self._play_context.remote_addr)
+            display.vvvv('firing event: on_become', host=self._play_context.remote_addr)
             auth_pass = self._play_context.become_pass
-            self._terminal.on_authorize(passwd=auth_pass)
+            self._terminal.on_become(passwd=auth_pass)
 
         display.vvvv('ssh connection has completed successfully', host=self._play_context.remote_addr)
         self._connected = True
@@ -215,7 +337,8 @@ class Connection(ConnectionBase):
         value to None and the _connected value to False
         '''
         ssh = connection_loader.get('ssh', class_only=True)
-        cp = ssh._create_control_path(self._play_context.remote_addr, self._play_context.port, self._play_context.remote_user)
+        cp = ssh._create_control_path(self._play_context.remote_addr, self._play_context.port, self._play_context.remote_user, self._play_context.connection,
+                                      self._ansible_playbook_pid)
 
         tmp_path = unfrackpath(C.PERSISTENT_CONTROL_PATH_DIR)
         socket_path = unfrackpath(cp % dict(directory=tmp_path))
@@ -230,7 +353,8 @@ class Connection(ConnectionBase):
         '''
         if self._socket_path:
             display.vvvv('resetting persistent connection for socket_path %s' % self._socket_path, host=self._play_context.remote_addr)
-            self.shutdown()
+            self.close()
+        display.vvvv('reset call on connection instance', host=self._play_context.remote_addr)
 
     def close(self):
         '''
@@ -248,7 +372,7 @@ class Connection(ConnectionBase):
             self._connected = False
             display.debug("ssh connection has been closed successfully")
 
-    def receive(self, command=None, prompts=None, answer=None):
+    def receive(self, command=None, prompts=None, answer=None, newline=True):
         '''
         Handles receiving of output from command
         '''
@@ -260,30 +384,33 @@ class Connection(ConnectionBase):
         while True:
             data = self._ssh_shell.recv(256)
 
+            # when a channel stream is closed, received data will be empty
+            if not data:
+                break
+
             recv.write(data)
             offset = recv.tell() - 256 if recv.tell() > 256 else 0
             recv.seek(offset)
 
             window = self._strip(recv.read())
-
             if prompts and not handled:
-                handled = self._handle_prompt(window, prompts, answer)
+                handled = self._handle_prompt(window, prompts, answer, newline)
 
             if self._find_prompt(window):
                 self._last_response = recv.getvalue()
                 resp = self._strip(self._last_response)
                 return self._sanitize(resp, command)
 
-    def send(self, command, prompt=None, answer=None, send_only=False):
+    def send(self, command, prompt=None, answer=None, newline=True, sendonly=False):
         '''
         Sends the command to the device in the opened shell
         '''
         try:
             self._history.append(command)
             self._ssh_shell.sendall(b'%s\r' % command)
-            if send_only:
+            if sendonly:
                 return
-            response = self.receive(command, prompt, answer)
+            response = self.receive(command, prompt, answer, newline)
             return to_text(response, errors='surrogate_or_strict')
         except (socket.timeout, AttributeError):
             display.vvvv(traceback.format_exc(), host=self._play_context.remote_addr)
@@ -297,7 +424,7 @@ class Connection(ConnectionBase):
             data = regex.sub(b'', data)
         return data
 
-    def _handle_prompt(self, resp, prompts, answer):
+    def _handle_prompt(self, resp, prompts, answer, newline):
         '''
         Matches the command prompt and responds
 
@@ -313,7 +440,9 @@ class Connection(ConnectionBase):
         for regex in prompts:
             match = regex.search(resp)
             if match:
-                self._ssh_shell.sendall(b'%s\r' % answer)
+                self._ssh_shell.sendall(b'%s' % answer)
+                if newline:
+                    self._ssh_shell.sendall(b'\r')
                 return True
         return False
 

@@ -70,7 +70,7 @@ class CallbackBase(AnsiblePlugin):
             name = getattr(self, 'CALLBACK_NAME', 'unnamed')
             ctype = getattr(self, 'CALLBACK_TYPE', 'old')
             version = getattr(self, 'CALLBACK_VERSION', '1.0')
-            self._display.vvvv('Loading callback plugin %s of type %s, v%s from %s' % (name, ctype, version, __file__))
+            self._display.vvvv('Loading callback plugin %s of type %s, v%s from %s' % (name, ctype, version, sys.modules[self.__module__].__file__))
 
         self.disabled = False
 
@@ -83,6 +83,9 @@ class CallbackBase(AnsiblePlugin):
 
     def set_option(self, k, v):
         self._plugin_options[k] = v
+
+    def get_option(self, k):
+        return self._plugin_options[k]
 
     def set_options(self, task_keys=None, var_options=None, direct=None):
         ''' This is different than the normal plugin method as callbacks get called early and really don't accept keywords.
@@ -122,7 +125,7 @@ class CallbackBase(AnsiblePlugin):
 
     def _handle_warnings(self, res):
         ''' display warnings, if enabled and any exist in the result '''
-        if C.COMMAND_WARNINGS:
+        if C.ACTION_WARNINGS:
             if 'warnings' in res and res['warnings']:
                 for warning in res['warnings']:
                     self._display.warning(warning)
@@ -233,9 +236,7 @@ class CallbackBase(AnsiblePlugin):
     def _clean_results(self, result, task_name):
         ''' removes data from results for display '''
         if task_name in ['debug']:
-            for remove_key in ('invocation'):
-                if remove_key in result:
-                    del result[remove_key]
+            result.pop('invocation', None)
 
     def set_play_context(self, play_context):
         pass

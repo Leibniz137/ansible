@@ -185,6 +185,15 @@ DOCUMENTATION = '''
         env: [{name: ANSIBLE_SCP_IF_SSH}]
         ini:
         - {key: scp_if_ssh, section: ssh_connection}
+      use_tty:
+        version_added: '2.5'
+        default: True
+        description: add -tt to ssh commands to force tty allocation
+        env: [{name: ANSIBLE_SSH_USETTY}]
+        ini:
+        - {key: usetty, section: ssh_connection}
+        type: boolean
+        yaml: {key: connection.usetty}
 '''
 
 import errno
@@ -306,11 +315,13 @@ class Connection(ConnectionBase):
         return self
 
     @staticmethod
-    def _create_control_path(host, port, user, connection=None):
+    def _create_control_path(host, port, user, connection=None, pid=None):
         '''Make a hash for the controlpath based on con attributes'''
         pstring = '%s-%s-%s' % (host, port, user)
         if connection:
             pstring += '-%s' % connection
+        if pid:
+            pstring += '-%s' % to_text(pid)
         m = hashlib.sha1()
         m.update(to_bytes(pstring))
         digest = m.hexdigest()
@@ -957,7 +968,11 @@ class Connection(ConnectionBase):
 
         ssh_executable = self._play_context.ssh_executable
 
-        if not in_data and sudoable:
+        # -tt can cause various issues in some environments so allow the user
+        # to disable it as a troubleshooting method.
+        use_tty = self.get_option('use_tty')
+
+        if not in_data and sudoable and use_tty:
             args = (ssh_executable, '-tt', self.host, cmd)
         else:
             args = (ssh_executable, self.host, cmd)

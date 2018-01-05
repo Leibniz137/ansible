@@ -53,7 +53,7 @@ options:
     choices: [ absent, directory, file, hard, link, touch ]
   src:
     description:
-      - path of the file to link to (applies only to C(state=link)). Will accept absolute,
+      - path of the file to link to (applies only to C(state=link) and C(state=hard)). Will accept absolute,
         relative and nonexisting paths. Relative paths are not expanded.
   recurse:
     description:
@@ -440,7 +440,7 @@ def main():
             if prev_state == 'absent':
                 try:
                     open(b_path, 'wb').close()
-                except OSError as e:
+                except (OSError, IOError) as e:
                     module.fail_json(path=path, msg='Error, could not touch target: %s' % to_native(e, nonstring='simplerepr'))
             elif prev_state in ('file', 'directory', 'hard'):
                 try:

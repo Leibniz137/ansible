@@ -48,7 +48,7 @@ options:
         or configuration template to load.  The path to the source file can
         either be the full path on the Ansible control host or a relative
         path from the playbook or role root directory.  This argument is mutually
-        exclusive with I(lines).
+        exclusive with I(lines), I(parents).
     required: false
     default: null
   before:
@@ -219,11 +219,11 @@ backup_path:
 """
 
 
-from ansible.module_utils.aruba import run_commands, get_config, load_config
-from ansible.module_utils.aruba import aruba_argument_spec
-from ansible.module_utils.aruba import check_args as aruba_check_args
+from ansible.module_utils.network.aruba.aruba import run_commands, get_config, load_config
+from ansible.module_utils.network.aruba.aruba import aruba_argument_spec
+from ansible.module_utils.network.aruba.aruba import check_args as aruba_check_args
 from ansible.module_utils.basic import AnsibleModule
-from ansible.module_utils.netcfg import NetworkConfig, dumps
+from ansible.module_utils.network.common.config import NetworkConfig, dumps
 
 
 def get_running_config(module, config=None):
@@ -233,11 +233,11 @@ def get_running_config(module, config=None):
             contents = config
         else:
             contents = get_config(module)
-    return NetworkConfig(indent=1, contents=contents)
+    return NetworkConfig(contents=contents)
 
 
 def get_candidate(module):
-    candidate = NetworkConfig(indent=1)
+    candidate = NetworkConfig()
 
     if module.params['src']:
         candidate.load(module.params['src'])
@@ -287,7 +287,8 @@ def main():
 
     argument_spec.update(aruba_argument_spec)
 
-    mutually_exclusive = [('lines', 'src')]
+    mutually_exclusive = [('lines', 'src'),
+                          ('parents', 'src')]
 
     required_if = [('match', 'strict', ['lines']),
                    ('match', 'exact', ['lines']),
@@ -307,7 +308,7 @@ def main():
 
     if module.params['backup'] or (module._diff and module.params['diff_against'] == 'running'):
         contents = get_config(module)
-        config = NetworkConfig(indent=1, contents=contents)
+        config = NetworkConfig(contents=contents)
         if module.params['backup']:
             result['__backup__'] = contents
 
@@ -354,8 +355,8 @@ def main():
     elif module.params['save_when'] == 'modified':
         output = run_commands(module, ['show running-config', 'show startup-config'])
 
-        running_config = NetworkConfig(indent=1, contents=output[0], ignore_lines=diff_ignore_lines)
-        startup_config = NetworkConfig(indent=1, contents=output[1], ignore_lines=diff_ignore_lines)
+        running_config = NetworkConfig(contents=output[0], ignore_lines=diff_ignore_lines)
+        startup_config = NetworkConfig(contents=output[1], ignore_lines=diff_ignore_lines)
 
         if running_config.sha1 != startup_config.sha1:
             save_config(module, result)
@@ -371,7 +372,7 @@ def main():
             contents = running_config.config_text
 
         # recreate the object in order to process diff_ignore_lines
-        running_config = NetworkConfig(indent=1, contents=contents, ignore_lines=diff_ignore_lines)
+        running_config = NetworkConfig(contents=contents, ignore_lines=diff_ignore_lines)
 
         if module.params['diff_against'] == 'running':
             if module.check_mode:
@@ -391,7 +392,7 @@ def main():
             contents = module.params['intended_config']
 
         if contents is not None:
-            base_config = NetworkConfig(indent=1, contents=contents, ignore_lines=diff_ignore_lines)
+            base_config = NetworkConfig(contents=contents, ignore_lines=diff_ignore_lines)
 
             if running_config.sha1 != base_config.sha1:
                 result.update({

@@ -49,7 +49,7 @@ options:
         or configuration template to load.  The path to the source file can
         either be the full path on the Ansible control host or a relative
         path from the playbook or role root directory.  This argument is mutually
-        exclusive with I(lines).
+        exclusive with I(lines), I(parents).
     required: false
     default: null
   before:
@@ -174,9 +174,9 @@ backup_path:
   sample: /playbooks/ansible/backup/ironware_config.2016-07-16@22:28:34
 """
 from ansible.module_utils.basic import AnsibleModule
-from ansible.module_utils.ironware import ironware_argument_spec, check_args
-from ansible.module_utils.ironware import get_config, load_config, run_commands
-from ansible.module_utils.netcfg import NetworkConfig, dumps, ConfigLine
+from ansible.module_utils.network.ironware.ironware import ironware_argument_spec, check_args
+from ansible.module_utils.network.ironware.ironware import get_config, load_config, run_commands
+from ansible.module_utils.network.common.config import NetworkConfig, dumps, ConfigLine
 from ansible.module_utils._text import to_native
 
 
@@ -228,7 +228,7 @@ def run(module, result):
     if result['changed'] or module.params['save_when'] == 'always':
         result['changed'] = True
         if not module.check_mode:
-            cmd = {'command': 'write memory', 'output': 'text'}
+            cmd = {'command': 'write memory'}
             run_commands(module, [cmd])
 
 
@@ -256,7 +256,8 @@ def main():
 
     argument_spec.update(ironware_argument_spec)
 
-    mutually_exclusive = [('lines', 'src')]
+    mutually_exclusive = [('lines', 'src'),
+                          ('parents', 'src')]
 
     required_if = [('match', 'strict', ['lines']),
                    ('match', 'exact', ['lines']),

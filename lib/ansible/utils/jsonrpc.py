@@ -7,7 +7,6 @@ __metaclass__ = type
 import json
 import traceback
 
-from ansible import constants as C
 from ansible.module_utils._text import to_text
 from ansible.module_utils.six import binary_type
 
@@ -44,15 +43,10 @@ class JsonRpcServer(object):
             kwargs = params
 
         rpc_method = None
-
-        if method in ('shutdown', 'reset'):
-            rpc_method = getattr(self, 'shutdown')
-
-        else:
-            for obj in self._objects:
-                rpc_method = getattr(obj, method, None)
-                if rpc_method:
-                    break
+        for obj in self._objects:
+            rpc_method = getattr(obj, method, None)
+            if rpc_method:
+                break
 
         if not rpc_method:
             error = self.method_not_found()

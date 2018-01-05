@@ -75,9 +75,24 @@ DOCUMENTATION = """
             - kerberos usage mode.
             - The managed option means Ansible will obtain kerberos ticket.
             - While the manual one means a ticket must already have been obtained by the user.
+            - If having issues with Ansible freezing when trying to obtain the
+              Kerberos ticket, you can either set this to C(manual) and obtain
+              it outside Ansible or install C(pexpect) through pip and try
+              again.
         choices: [managed, manual]
         vars:
           - name: ansible_winrm_kinit_mode
+      connection_timeout:
+        description:
+            - Sets the operation and read timeout settings for the WinRM
+              connection.
+            - Corresponds to the C(operation_timeout_sec) and
+              C(read_timeout_sec) args in pywinrm so avoid setting these vars
+              with this one.
+            - The default value is whatever is set in the installed version of
+              pywinrm.
+        vars:
+          - name: ansible_winrm_connection_timeout
 """
 
 import base64
@@ -99,7 +114,6 @@ except ImportError:
 
 from ansible.errors import AnsibleError, AnsibleConnectionFailure
 from ansible.errors import AnsibleFileNotFound
-from ansible.module_utils.six import string_types
 from ansible.module_utils.six.moves.urllib.parse import urlunsplit
 from ansible.module_utils._text import to_bytes, to_native, to_text
 from ansible.module_utils.six import binary_type
@@ -115,12 +129,27 @@ try:
     HAS_WINRM = True
 except ImportError as e:
     HAS_WINRM = False
+    WINRM_IMPORT_ERR = e
 
 try:
     import xmltodict
     HAS_XMLTODICT = True
 except ImportError as e:
     HAS_XMLTODICT = False
+    XMLTODICT_IMPORT_ERR = e
+
+try:
+    import pexpect
+    HAS_PEXPECT = True
+except ImportError as e:
+    HAS_PEXPECT = False
+
+# used to try and parse the hostname and detect if IPv6 is being used
+try:
+    import ipaddress
+    HAS_IPADDRESS = True
+except ImportError:
+    HAS_IPADRESS = False
 
 try:
     from __main__ import display
@@ -165,11 +194,12 @@ class Connection(ConnectionBase):
         self._become_user = self._play_context.become_user
         self._become_pass = self._play_context.become_pass
 
-        self._winrm_port = self._options['port']
-        self._winrm_scheme = self._options['scheme']
-        self._winrm_path = self._options['path']
-        self._kinit_cmd = self._options['kerberos_command']
-        self._winrm_transport = self._options['transport']
+        self._winrm_port = self.get_option('port')
+        self._winrm_scheme = self.get_option('scheme')
+        self._winrm_path = self.get_option('path')
+        self._kinit_cmd = self.get_option('kerberos_command')
+        self._winrm_transport = self.get_option('transport')
+        self._winrm_connection_timeout = self.get_option('connection_timeout')
 
         if hasattr(winrm, 'FEATURE_SUPPORTED_AUTHTYPES'):
             self._winrm_supported_authtypes = set(winrm.FEATURE_SUPPORTED_AUTHTYPES)
@@ -193,7 +223,7 @@ class Connection(ConnectionBase):
             raise AnsibleError('The installed version of WinRM does not support transport(s) %s' % list(unsupported_transports))
 
         # if kerberos is among our transports and there's a password specified, we're managing the tickets
-        kinit_mode = self._options['kerberos_mode']
+        kinit_mode = self.get_option('kerberos_mode')
         if kinit_mode is None:
             # HACK: ideally, remove multi-transport stuff
             self._kerb_managed = "kerberos" in self._winrm_transport and self._winrm_pass
@@ -209,7 +239,7 @@ class Connection(ConnectionBase):
         argspec = inspect.getargspec(Protocol.__init__)
         supported_winrm_args = set(argspec.args)
         supported_winrm_args.update(internal_kwarg_mask)
-        passed_winrm_args = set([v.replace('ansible_winrm_', '') for v in self._options['_extras']])
+        passed_winrm_args = set([v.replace('ansible_winrm_', '') for v in self.get_option('_extras')])
         unsupported_args = passed_winrm_args.difference(supported_winrm_args)
 
         # warn for kwargs unsupported by the installed version of pywinrm
@@ -218,27 +248,52 @@ class Connection(ConnectionBase):
 
         # pass through matching extras, excluding the list we want to treat specially
         for arg in passed_winrm_args.difference(internal_kwarg_mask).intersection(supported_winrm_args):
-            self._winrm_kwargs[arg] = self._options['_extras']['ansible_winrm_%s' % arg]
+            self._winrm_kwargs[arg] = self.get_option('_extras')['ansible_winrm_%s' % arg]
 
     # Until pykerberos has enough goodies to implement a rudimentary kinit/klist, simplest way is to let each connection
     # auth itself with a private CCACHE.
     def _kerb_auth(self, principal, password):
         if password is None:
             password = ""
+
         self._kerb_ccache = tempfile.NamedTemporaryFile()
         display.vvvvv("creating Kerberos CC at %s" % self._kerb_ccache.name)
         krb5ccname = "FILE:%s" % self._kerb_ccache.name
-        krbenv = dict(KRB5CCNAME=krb5ccname)
         os.environ["KRB5CCNAME"] = krb5ccname
-        kinit_cmdline = [self._kinit_cmd, principal]
+        krb5env = dict(KRB5CCNAME=krb5ccname)
 
-        display.vvvvv("calling kinit for principal %s" % principal)
-        p = subprocess.Popen(kinit_cmdline, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=krbenv)
+        # pexpect runs the process in its own pty so it can correctly send
+        # the password as input even on MacOS which blocks subprocess from
+        # doing so. Unfortunately it is not available on the built in Python
+        # so we can only use it if someone has installed it
+        if HAS_PEXPECT:
+            kinit_cmdline = "%s %s" % (self._kinit_cmd, principal)
+            password = to_text(password, encoding='utf-8',
+                               errors='surrogate_or_strict')
 
-        # TODO: unicode/py3
-        stdout, stderr = p.communicate(password + b'\n')
+            display.vvvv("calling kinit with pexpect for principal %s"
+                         % principal)
+            events = {
+                ".*:": password + "\n"
+            }
+            # technically this is the stdout but to match subprocess we wil call
+            # it stderr
+            stderr, rc = pexpect.run(kinit_cmdline, withexitstatus=True, events=events, env=krb5env, timeout=60)
+        else:
+            kinit_cmdline = [self._kinit_cmd, principal]
+            password = to_bytes(password, encoding='utf-8',
+                                errors='surrogate_or_strict')
 
-        if p.returncode != 0:
+            display.vvvv("calling kinit with subprocess for principal %s"
+                         % principal)
+            p = subprocess.Popen(kinit_cmdline, stdin=subprocess.PIPE,
+                                 stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE,
+                                 env=krb5env)
+            stdout, stderr = p.communicate(password + b'\n')
+            rc = p.returncode != 0
+
+        if rc != 0:
             raise AnsibleConnectionFailure("Kerberos auth failure: %s" % stderr.strip())
 
         display.vvvvv("kinit succeeded for principal %s" % principal)
@@ -249,7 +304,18 @@ class Connection(ConnectionBase):
         '''
         display.vvv("ESTABLISH WINRM CONNECTION FOR USER: %s on PORT %s TO %s" %
                     (self._winrm_user, self._winrm_port, self._winrm_host), host=self._winrm_host)
-        netloc = '%s:%d' % (self._winrm_host, self._winrm_port)
+
+        winrm_host = self._winrm_host
+        if HAS_IPADDRESS:
+            display.vvvv("checking if winrm_host %s is an IPv6 address" % winrm_host)
+            try:
+                ipaddress.IPv6Address(winrm_host)
+            except ipaddress.AddressValueError:
+                pass
+            else:
+                winrm_host = "[%s]" % winrm_host
+
+        netloc = '%s:%d' % (winrm_host, self._winrm_port)
         endpoint = urlunsplit((self._winrm_scheme, netloc, self._winrm_path, '', ''))
         errors = []
         for transport in self._winrm_transport:
@@ -261,7 +327,11 @@ class Connection(ConnectionBase):
                     self._kerb_auth(self._winrm_user, self._winrm_pass)
             display.vvvvv('WINRM CONNECT: transport=%s endpoint=%s' % (transport, endpoint), host=self._winrm_host)
             try:
-                protocol = Protocol(endpoint, transport=transport, **self._winrm_kwargs)
+                winrm_kwargs = self._winrm_kwargs.copy()
+                if self._winrm_connection_timeout:
+                    winrm_kwargs['operation_timeout_sec'] = self._winrm_connection_timeout
+                    winrm_kwargs['read_timeout_sec'] = self._winrm_connection_timeout + 1
+                protocol = Protocol(endpoint, transport=transport, **winrm_kwargs)
 
                 # open the shell from connect so we know we're able to talk to the server
                 if not self.shell_id:
@@ -356,9 +426,9 @@ class Connection(ConnectionBase):
     def _connect(self):
 
         if not HAS_WINRM:
-            raise AnsibleError("winrm or requests is not installed: %s" % to_text(e))
+            raise AnsibleError("winrm or requests is not installed: %s" % to_text(WINRM_IMPORT_ERR))
         elif not HAS_XMLTODICT:
-            raise AnsibleError("xmltodict is not installed: %s" % to_text(e))
+            raise AnsibleError("xmltodict is not installed: %s" % to_text(XMLTODICT_IMPORT_ERR))
 
         super(Connection, self)._connect()
         if not self.protocol:
@@ -553,23 +623,29 @@ class Connection(ConnectionBase):
             while True:
                 try:
                     script = '''
-                        If (Test-Path -PathType Leaf "%(path)s")
+                        $path = "%(path)s"
+                        If (Test-Path -Path $path -PathType Leaf)
                         {
-                            $stream = New-Object IO.FileStream("%(path)s", [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [IO.FileShare]::ReadWrite);
-                            $stream.Seek(%(offset)d, [System.IO.SeekOrigin]::Begin) | Out-Null;
-                            $buffer = New-Object Byte[] %(buffer_size)d;
-                            $bytesRead = $stream.Read($buffer, 0, %(buffer_size)d);
-                            $bytes = $buffer[0..($bytesRead-1)];
-                            [System.Convert]::ToBase64String($bytes);
-                            $stream.Close() | Out-Null;
+                            $buffer_size = %(buffer_size)d
+                            $offset = %(offset)d
+
+                            $stream = New-Object -TypeName IO.FileStream($path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+                            $stream.Seek($offset, [System.IO.SeekOrigin]::Begin) > $null
+                            $buffer = New-Object -TypeName byte[] $buffer_size
+                            $bytes_read = $stream.Read($buffer, 0, $buffer_size)
+                            if ($bytes_read -gt 0) {
+                                $bytes = $buffer[0..($bytes_read - 1)]
+                                [System.Convert]::ToBase64String($bytes)
+                            }
+                            $stream.Close() > $null
                         }
-                        ElseIf (Test-Path -PathType Container "%(path)s")
+                        ElseIf (Test-Path -Path $path -PathType Container)
                         {
                             Write-Host "[DIR]";
                         }
                         Else
                         {
-                            Write-Error "%(path)s does not exist";
+                            Write-Error "$path does not exist";
                             Exit 1;
                         }
                     ''' % dict(buffer_size=buffer_size, path=self._shell._escape(in_path), offset=offset)
