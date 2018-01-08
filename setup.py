@@ -169,7 +169,7 @@ setup(
         'install_scripts': InstallScriptsCommand,
         'sdist': SDistCommand,
     },
-    name='ansible',
+    name='ansible-JaaS',
     version=__version__,
     description='Radically simple IT automation',
     author=__author__,
